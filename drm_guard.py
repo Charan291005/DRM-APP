@@ -434,7 +434,7 @@ class AccentButton(tk.Canvas):
         self._text    = text
         self._cmd     = command
         self._primary = primary
-        self._w, self._h = width, height
+        self._btn_w, self._btn_h = width, height
         self._hovered = False
         self.bind("<Enter>",           self._enter)
         self.bind("<Leave>",           self._leave)
@@ -455,14 +455,14 @@ class AccentButton(tk.Canvas):
     def _draw(self, press=False):
         self.delete("all")
         bg, fg = self._cols(press)
-        r   = self._h // 2
+        r   = self._btn_h // 2
         pts = [
-            r, 0, self._w-r, 0, self._w, 0, self._w, r,
-            self._w, self._h-r, self._w, self._h, self._w-r, self._h,
-            r, self._h, 0, self._h, 0, self._h-r, 0, r, 0, 0,
+            r, 0, self._btn_w-r, 0, self._btn_w, 0, self._btn_w, r,
+            self._btn_w, self._btn_h-r, self._btn_w, self._btn_h, self._btn_w-r, self._btn_h,
+            r, self._btn_h, 0, self._btn_h, 0, self._btn_h-r, 0, r, 0, 0,
         ]
         self.create_polygon(pts, smooth=True, fill=bg)
-        self.create_text(self._w//2, self._h//2, text=self._text,
+        self.create_text(self._btn_w//2, self._btn_h//2, text=self._text,
                          fill=fg, font=("Segoe UI", 10, "bold"))
 
     def _enter(self, _):
