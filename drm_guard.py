@@ -1,19 +1,18 @@
 """
-DRM Guard v4.0 -- Production-Grade Rewrite
-==========================================
-Security Fixes:
-  - In-memory decryption: bytes NEVER touch disk
+DRM Guard v5.0 -- Phase 3: Server Integration
+=============================================
+Security:
+  - In-memory decryption (bytes NEVER touch disk)
   - AES-256-CBC + PKCS7 padding
-  - Password stored as PBKDF2-SHA256 hash only (not plaintext)
+  - Dual-mode: LOCAL (offline) and SERVER (online KMS)
+  - SERVER mode: AES key stored on backend, never in the .drm file
+  - Backend validates MAC + expiry + revocation before issuing key
 
-UI Upgrades:
+UI:
   - Slate + Cyan dark palette (Linear / Vercel / Notion inspired)
-  - Custom toast notifications (non-blocking)
-  - Password strength indicator (4-level)
-  - Drag-and-drop file input (tkinterdnd2)
-  - In-app Audit Log viewer with Treeview
-  - Anti-screenshot via Windows SetWindowDisplayAffinity
-  - 3-section sidebar navigation (Encrypt / Decrypt / Log)
+  - 4-section sidebar: Encrypt / Decrypt / Audit Log / Settings
+  - SettingsPage: server login, connection status, account info
+  - Mode badge on Encrypt/Decrypt pages (LOCAL / SERVER)
 """
 
 import os
@@ -40,6 +39,15 @@ try:
     _HAS_DND = True
 except ImportError:
     _HAS_DND = False
+
+try:
+    import backend_client as _bc
+    _HAS_BACKEND = True
+except ImportError:
+    _HAS_BACKEND = False
+
+# Server-mode .drm header prefix (identifies the format version)
+_SERVER_PREFIX = "DRMG_SERVER_V1"
 
 
 # ---------------------------------------------------------------------------
@@ -152,7 +160,7 @@ def encrypt_file(path: str, expiry: str, identifier: str,
 
 
 def decrypt_to_bytes(drm_path: str, provided_password: str):
-    """Fully in-memory decryption. Returns (bytes, ext, wm_text, wm_opacity)."""
+    """LOCAL mode: fully in-memory decryption. Returns (bytes, ext, wm_text, wm_opacity)."""
     with open(drm_path, "rb") as f:
         header_bytes = f.readline().strip()
         iv           = f.read(16)
@@ -176,6 +184,114 @@ def decrypt_to_bytes(drm_path: str, provided_password: str):
     cipher = AES.new(key, AES.MODE_CBC, iv)
     plain  = _unpad(cipher.decrypt(ciphertext))
     return plain, original_ext, watermark_text, watermark_opacity
+
+
+def encrypt_file_server(
+    path: str,
+    expiry_str: str,
+    lock_type: str,
+    lock_identifier: str,
+    watermark_text: str = "",
+    watermark_opacity: int = 0,
+) -> str:
+    """
+    SERVER mode encryption.
+    - Generates a random AES-256 key + IV.
+    - Encrypts the file.
+    - Sends key + IV + policy to the backend KMS.
+    - Writes a .drm file whose header contains only the file_id (no key!).
+
+    .drm server-mode header format:
+        DRMG_SERVER_V1|<file_id>|<server_url>|<ext>|<iv_b64>
+    """
+    if not _HAS_BACKEND:
+        raise RuntimeError("backend_client module not found.")
+    session = _bc.get_session()
+    if not session.connected:
+        raise RuntimeError("Not connected to server. Go to Settings and log in first.")
+
+    with open(path, "rb") as f:
+        plaintext = f.read()
+
+    # Generate a truly random key (not derived from password)
+    aes_key    = os.urandom(32)
+    iv         = os.urandom(16)
+    cipher     = AES.new(aes_key, AES.MODE_CBC, iv)
+    ciphertext = cipher.encrypt(_pad(plaintext))
+
+    aes_key_b64 = base64.b64encode(aes_key).decode()
+    iv_b64      = base64.b64encode(iv).decode()
+    ext         = os.path.splitext(path)[1][1:]
+
+    # Register with the backend — get a file_id back
+    file_id = _bc.register_drm_file(
+        aes_key_b64      = aes_key_b64,
+        iv_b64           = iv_b64,
+        original_name    = os.path.basename(path),
+        original_ext     = ext,
+        expiry_str       = expiry_str,
+        lock_type        = lock_type,
+        lock_identifier  = lock_identifier if lock_type != "NONE" else None,
+        watermark_text   = watermark_text,
+        watermark_opacity= watermark_opacity,
+        file_size_bytes  = len(plaintext),
+    )
+
+    # Write .drm file — key is NOT in the file
+    header   = f"{_SERVER_PREFIX}|{file_id}|{session.url}|{ext}|{iv_b64}".encode()
+    out_path = os.path.splitext(path)[0] + ".drm"
+    with open(out_path, "wb") as f:
+        f.write(header + b"\n" + ciphertext)
+
+    return out_path
+
+
+def decrypt_auto(drm_path: str, password: str = ""):
+    """
+    Auto-detects the .drm file mode (LOCAL or SERVER) and decrypts accordingly.
+    - LOCAL: uses password + MAC validation (offline).
+    - SERVER: fetches AES key from the backend KMS (no password needed).
+    Returns (plaintext_bytes, ext, watermark_text, watermark_opacity, mode_str).
+    """
+    with open(drm_path, "rb") as f:
+        first_line = f.readline().strip().decode(errors="replace")
+
+    if first_line.startswith(_SERVER_PREFIX):
+        # ── SERVER MODE ─────────────────────────────────────────────────────
+        parts = first_line.split("|")
+        if len(parts) != 5:
+            raise ValueError("Corrupted server-mode DRM header (expected 5 fields).")
+        _, file_id, server_url, ext, iv_b64 = parts
+
+        # Request key from backend (validates MAC + expiry + revocation)
+        key_data = _bc.request_decryption_key(file_id, server_url)
+
+        aes_key    = base64.b64decode(key_data["aes_key_b64"])
+        iv         = base64.b64decode(iv_b64)
+        wm_text    = key_data.get("watermark_text", "")
+        wm_opacity = key_data.get("watermark_opacity", 0)
+
+        with open(drm_path, "rb") as f:
+            f.readline()          # skip header line
+            ciphertext = f.read() # rest is ciphertext
+
+        cipher = AES.new(aes_key, AES.MODE_CBC, iv)
+        plain  = _unpad(cipher.decrypt(ciphertext))
+        return plain, ext, wm_text, wm_opacity, "SERVER"
+    else:
+        # ── LOCAL MODE ──────────────────────────────────────────────────────
+        plain, ext, wm_text, wm_opacity = decrypt_to_bytes(drm_path, password)
+        return plain, ext, wm_text, wm_opacity, "LOCAL"
+
+
+def detect_drm_mode(drm_path: str) -> str:
+    """Returns 'SERVER' or 'LOCAL' by peeking at the .drm header."""
+    try:
+        with open(drm_path, "rb") as f:
+            first = f.readline().strip().decode(errors="replace")
+        return "SERVER" if first.startswith(_SERVER_PREFIX) else "LOCAL"
+    except Exception:
+        return "LOCAL"
 
 
 # ===========================================================================
@@ -733,10 +849,25 @@ class EncryptorPage(tk.Frame):
         hrow.pack(fill="x", pady=(0, 28))
         tk.Label(hrow, text="  ENCRYPT  ", bg=ACCENT_DIM, fg=ACCENT,
                  font=FONT_SMALL, pady=3, padx=8).pack(anchor="w", pady=(0, 6))
-        tk.Label(hrow, text="Protect a File", bg=BG_BASE,
-                 fg=TEXT_1, font=FONT_TITLE).pack(anchor="w")
-        tk.Label(hrow, text="AES-256-CBC encryption with expiry date, device lock & optional watermark",
-                 bg=BG_BASE, fg=TEXT_2, font=FONT_SUB).pack(anchor="w", pady=(4, 0))
+        
+        title_row = tk.Frame(hrow, bg=BG_BASE)
+        title_row.pack(fill="x")
+        tk.Label(title_row, text="Protect a File", bg=BG_BASE,
+                 fg=TEXT_1, font=FONT_TITLE).pack(side="left")
+        
+        self._mode_var = tk.StringVar(value="SERVER" if (_HAS_BACKEND and _bc.get_session().connected) else "LOCAL")
+        mode_f = tk.Frame(title_row, bg=BG_CARD, highlightthickness=1, highlightbackground=BDR_SUB)
+        mode_f.pack(side="right")
+        for m in ("LOCAL", "SERVER"):
+            tk.Radiobutton(
+                mode_f, text=m, variable=self._mode_var, value=m,
+                bg=BG_CARD, fg=TEXT_1, selectcolor=ACCENT_DIM,
+                indicatoron=0, font=FONT_SMALL, width=8,
+                command=self._on_mode_change
+            ).pack(side="left", padx=1, pady=1)
+
+        self._desc_lbl = tk.Label(hrow, text="", bg=BG_BASE, fg=TEXT_2, font=FONT_SUB)
+        self._desc_lbl.pack(anchor="w", pady=(4, 0))
 
         # ── Drop Zone ────────────────────────────────────────────────────────
         self._dz = DropZone(
@@ -801,20 +932,20 @@ class EncryptorPage(tk.Frame):
         tk.Label(info_f, text=f"  IP   {get_ip()}",
                  bg=BG_CARD2, fg=TEXT_ACCENT, font=FONT_MONO).pack(anchor="w", padx=8, pady=(0, 6))
 
-        pw_card = GlassCard(opts_row, "Encryption Password", "Key")
-        pw_card.pack(side="left", fill="both", expand=True)
+        self._pw_card = GlassCard(opts_row, "Encryption Password", "Key")
+        self._pw_card.pack(side="left", fill="both", expand=True)
 
-        tk.Label(pw_card.inner, text="Password", bg=BG_CARD,
+        tk.Label(self._pw_card.inner, text="Password", bg=BG_CARD,
                  fg=TEXT_2, font=FONT_LABEL).pack(anchor="w", pady=(0, 4))
-        self._pw = StyledEntry(pw_card.inner, show_char="*")
+        self._pw = StyledEntry(self._pw_card.inner, show_char="*")
         self._pw.pack(fill="x", ipady=8)
         self._pw.bind("<KeyRelease>", lambda e: self._strength.evaluate(self._pw.get()))
-        self._strength = PasswordStrengthBar(pw_card.inner)
+        self._strength = PasswordStrengthBar(self._pw_card.inner)
         self._strength.pack(fill="x", pady=(8, 0))
 
-        tk.Label(pw_card.inner, text="Confirm Password", bg=BG_CARD,
+        tk.Label(self._pw_card.inner, text="Confirm Password", bg=BG_CARD,
                  fg=TEXT_2, font=FONT_LABEL).pack(anchor="w", pady=(14, 4))
-        self._pw2 = StyledEntry(pw_card.inner, show_char="*")
+        self._pw2 = StyledEntry(self._pw_card.inner, show_char="*")
         self._pw2.pack(fill="x", ipady=8)
 
         # ── Watermark ────────────────────────────────────────────────────────
@@ -861,6 +992,8 @@ class EncryptorPage(tk.Frame):
         AccentButton(arow, "Open Decryptor ->", command=self._app.show_decrypt,
                      primary=False, width=190, height=40).pack(side="left")
 
+        self._on_mode_change()
+
     # ── Helpers ──────────────────────────────────────────────────────────────
     def _draw_toggle(self, state):
         tc = ACCENT if state else BDR_MUTED
@@ -884,18 +1017,44 @@ class EncryptorPage(tk.Frame):
             except tk.TclError:
                 pass
 
+    def _on_mode_change(self):
+        mode = self._mode_var.get()
+        if mode == "SERVER":
+            self._desc_lbl.config(text="SERVER MODE: AES key is safely stored on the backend KMS.")
+            for w in self._pw_card.inner.winfo_children():
+                try: w.config(state="disabled")
+                except: pass
+            self._pw_card.config(highlightbackground=BDR_MUTED)
+            self._pw.set_value("Server Mode (No password required)")
+            self._pw2.set_value("Server Mode (No password required)")
+        else:
+            self._desc_lbl.config(text="LOCAL MODE: AES key is derived from your password and MAC.")
+            for w in self._pw_card.inner.winfo_children():
+                try: w.config(state="normal")
+                except: pass
+            self._pw_card.config(highlightbackground=BDR_SUB)
+            self._pw.clear()
+            self._pw2.clear()
+
     def _encrypt(self):
         f = self._file
         if not f or not os.path.exists(f):
             toast(self._app.root, "Please select a valid file first.", "warn")
             return
+
+        mode = self._mode_var.get()
+        if mode == "SERVER" and not (_HAS_BACKEND and _bc.get_session().connected):
+            toast(self._app.root, "Not connected to server. Go to Settings to log in.", "error")
+            return
+
         pw = self._pw.get()
-        if not pw:
-            toast(self._app.root, "Please enter an encryption password.", "warn")
-            return
-        if pw != self._pw2.get():
-            toast(self._app.root, "Passwords do not match.", "error")
-            return
+        if mode == "LOCAL":
+            if not pw:
+                toast(self._app.root, "Please enter an encryption password.", "warn")
+                return
+            if pw != self._pw2.get():
+                toast(self._app.root, "Passwords do not match.", "error")
+                return
 
         sel_date   = self._cal.get_date()
         h, m       = self._time.get()
@@ -918,7 +1077,10 @@ class EncryptorPage(tk.Frame):
 
         def _run():
             try:
-                out = encrypt_file(f, expiry_str, identifier, pw, wm_text, wm_opacity)
+                if mode == "SERVER":
+                    out = encrypt_file_server(f, expiry_str, pref, identifier, wm_text, wm_opacity)
+                else:
+                    out = encrypt_file(f, expiry_str, identifier, pw, wm_text, wm_opacity)
                 log_action("ENCRYPT", os.path.basename(f), identifier, expiry_str, "OK")
                 self._app.root.after(0, lambda: toast(
                     self._app.root, f"Saved: {os.path.basename(out)}", "success"))
@@ -952,13 +1114,20 @@ class DecryptorPage(tk.Frame):
         hrow.pack(fill="x", pady=(0, 28))
         tk.Label(hrow, text="  DECRYPT  ", bg=SUCCESS_DIM, fg=SUCCESS,
                  font=FONT_SMALL, pady=3, padx=8).pack(anchor="w", pady=(0, 6))
-        tk.Label(hrow, text="Open a Protected File", bg=BG_BASE,
-                 fg=TEXT_1, font=FONT_TITLE).pack(anchor="w")
+                 
+        title_row = tk.Frame(hrow, bg=BG_BASE)
+        title_row.pack(fill="x")
+        tk.Label(title_row, text="Open a Protected File", bg=BG_BASE,
+                 fg=TEXT_1, font=FONT_TITLE).pack(side="left")
+                 
+        self._mode_badge = tk.Label(title_row, text="", bg=BG_BASE, font=FONT_SMALL)
+        self._mode_badge.pack(side="right", pady=8)
+
         tk.Label(hrow, text="Decryption happens entirely in memory — the file is never written to disk",
                  bg=BG_BASE, fg=TEXT_2, font=FONT_SUB).pack(anchor="w", pady=(4, 0))
 
         self._dz = DropZone(
-            c, on_file=lambda p: setattr(self, "_file", p),
+            c, on_file=self._on_file_selected,
             filetypes=[("DRM Files", "*.drm")],
             label="Drop .drm file here  |  click to browse"
         )
@@ -994,9 +1163,9 @@ class DecryptorPage(tk.Frame):
                  ).pack(anchor="w", padx=10, pady=(0, 8))
 
         # Password
-        pw_card = GlassCard(c, "Decryption Password", "Key")
-        pw_card.pack(fill="x", pady=(0, 16))
-        self._pw = StyledEntry(pw_card.inner, show_char="*",
+        self._pw_card = GlassCard(c, "Decryption Password", "Key")
+        self._pw_card.pack(fill="x", pady=(0, 16))
+        self._pw = StyledEntry(self._pw_card.inner, show_char="*",
                                placeholder="Enter the decryption password")
         self._pw.pack(fill="x", ipady=9)
 
@@ -1007,18 +1176,42 @@ class DecryptorPage(tk.Frame):
         AccentButton(arow, "<- Encryptor", command=self._app.show_encrypt,
                      primary=False, width=180, height=40).pack(side="left")
 
+    def _on_file_selected(self, p):
+        self._file = p
+        if p.endswith(".drm"):
+            mode = detect_drm_mode(p)
+            self._mode_badge.config(
+                text=f" {mode} MODE ", 
+                bg=ACCENT_DIM if mode == "SERVER" else BDR_MUTED,
+                fg=ACCENT if mode == "SERVER" else TEXT_2
+            )
+            if mode == "SERVER":
+                for w in self._pw_card.inner.winfo_children():
+                    try: w.config(state="disabled")
+                    except: pass
+                self._pw_card.config(highlightbackground=BDR_MUTED)
+                self._pw.set_value("Server Mode (No password required)")
+            else:
+                for w in self._pw_card.inner.winfo_children():
+                    try: w.config(state="normal")
+                    except: pass
+                self._pw_card.config(highlightbackground=BDR_SUB)
+                self._pw.clear()
+
     def _decrypt(self):
         if not self._file:
             toast(self._app.root, "Please select a .drm file.", "warn")
             return
+            
+        mode = detect_drm_mode(self._file)
         pw = self._pw.get()
-        if not pw:
+        if mode == "LOCAL" and not pw:
             toast(self._app.root, "Please enter the decryption password.", "warn")
             return
 
         def _run():
             try:
-                data, ext, wm_text, wm_opacity = decrypt_to_bytes(self._file, pw)
+                data, ext, wm_text, wm_opacity, detected_mode = decrypt_auto(self._file, pw)
                 log_action("DECRYPT", os.path.basename(self._file), get_mac(), "-", "OK")
 
                 def _open():
@@ -1032,7 +1225,7 @@ class DecryptorPage(tk.Frame):
 
                 self._app.root.after(0, _open)
                 self._app.root.after(0, lambda: toast(
-                    self._app.root, "File opened securely in memory.", "success"))
+                    self._app.root, f"File opened securely ({detected_mode} mode).", "success"))
                 self._app.root.after(0, self._app.refresh_log)
             except PermissionError as e:
                 log_action("DECRYPT", os.path.basename(self._file), get_mac(), "-", "DENIED")
@@ -1112,13 +1305,208 @@ class LogPage(tk.Frame):
 
 
 # ===========================================================================
+# SETTINGS PAGE
+# ===========================================================================
+class SettingsPage(tk.Frame):
+    """Creator login panel — connect the desktop app to the backend server."""
+
+    def __init__(self, parent, app, **kw):
+        super().__init__(parent, bg=BG_BASE, **kw)
+        self._app = app
+        self._build()
+
+    def _build(self):
+        sf = ScrollableFrame(self)
+        sf.pack(fill="both", expand=True)
+        c = sf.frame
+        c.config(padx=40, pady=30)
+
+        # Header
+        hrow = tk.Frame(c, bg=BG_BASE)
+        hrow.pack(fill="x", pady=(0, 28))
+        tk.Label(hrow, text="  SETTINGS  ", bg=ACCENT_DIM, fg=ACCENT,
+                 font=FONT_SMALL, pady=3, padx=8).pack(anchor="w", pady=(0, 6))
+        tk.Label(hrow, text="Server Connection", bg=BG_BASE,
+                 fg=TEXT_1, font=FONT_TITLE).pack(anchor="w")
+        tk.Label(hrow, text="Connect to the DRM Guard backend to use Server Mode",
+                 bg=BG_BASE, fg=TEXT_2, font=FONT_SUB).pack(anchor="w", pady=(4, 0))
+
+        # Status card
+        self._status_card = GlassCard(c, "Connection Status", "Net")
+        self._status_card.pack(fill="x", pady=(0, 16))
+        self._status_row = tk.Frame(self._status_card.inner, bg=BG_CARD)
+        self._status_row.pack(fill="x")
+        self._status_dot = tk.Canvas(self._status_row, width=10, height=10,
+                                      bg=BG_CARD, highlightthickness=0)
+        self._status_dot.pack(side="left", padx=(0, 8))
+        self._status_lbl = tk.Label(self._status_row, text="Not connected",
+                                     bg=BG_CARD, fg=TEXT_2, font=FONT_BODY)
+        self._status_lbl.pack(side="left")
+        self._user_lbl = tk.Label(self._status_card.inner, text="",
+                                   bg=BG_CARD, fg=TEXT_ACCENT, font=FONT_MONO)
+        self._user_lbl.pack(anchor="w", pady=(4, 0))
+        self._refresh_status()
+
+        # Server URL
+        url_card = GlassCard(c, "Server URL", "URL")
+        url_card.pack(fill="x", pady=(0, 16))
+        tk.Label(url_card.inner, text="Backend API address",
+                 bg=BG_CARD, fg=TEXT_2, font=FONT_LABEL).pack(anchor="w", pady=(0, 4))
+        self._url_entry = StyledEntry(url_card.inner,
+                                       placeholder="http://localhost:8000")
+        if _HAS_BACKEND:
+            sess = _bc.get_session()
+            if sess.base_url:
+                self._url_entry.set_value(sess.base_url)
+        self._url_entry.pack(fill="x", ipady=8)
+        tk.Label(url_card.inner,
+                 text="For production deploy on a cloud server and use your public URL.",
+                 bg=BG_CARD, fg=TEXT_3, font=FONT_SMALL).pack(anchor="w", pady=(4, 0))
+
+        # Login
+        login_card = GlassCard(c, "Creator Account", "User")
+        login_card.pack(fill="x", pady=(0, 16))
+
+        tk.Label(login_card.inner, text="Email", bg=BG_CARD,
+                 fg=TEXT_2, font=FONT_LABEL).pack(anchor="w", pady=(0, 4))
+        self._email = StyledEntry(login_card.inner, placeholder="creator@example.com")
+        self._email.pack(fill="x", ipady=8)
+
+        tk.Label(login_card.inner, text="Password", bg=BG_CARD,
+                 fg=TEXT_2, font=FONT_LABEL).pack(anchor="w", pady=(10, 4))
+        self._pw = StyledEntry(login_card.inner, show_char="*",
+                               placeholder="Your account password")
+        self._pw.pack(fill="x", ipady=8)
+
+        # Action row
+        arow = tk.Frame(c, bg=BG_BASE)
+        arow.pack(fill="x", pady=(8, 0))
+        AccentButton(arow, "LOGIN", command=self._login,
+                     primary=True, width=160, height=40).pack(side="left", padx=(0, 10))
+        AccentButton(arow, "TEST CONNECTION", command=self._test_conn,
+                     primary=False, width=200, height=40).pack(side="left", padx=(0, 10))
+        AccentButton(arow, "LOGOUT", command=self._logout,
+                     primary=False, width=140, height=40).pack(side="left")
+
+        # Register section
+        reg_card = GlassCard(c, "New Account", "Reg")
+        reg_card.pack(fill="x", pady=(16, 0))
+        tk.Label(reg_card.inner,
+                 text="Don't have an account yet? Register below.",
+                 bg=BG_CARD, fg=TEXT_2, font=FONT_BODY).pack(anchor="w", pady=(0, 8))
+        tk.Label(reg_card.inner, text="Full Name", bg=BG_CARD,
+                 fg=TEXT_2, font=FONT_LABEL).pack(anchor="w", pady=(0, 4))
+        self._reg_name = StyledEntry(reg_card.inner, placeholder="Your full name")
+        self._reg_name.pack(fill="x", ipady=7)
+        reg_btn_row = tk.Frame(reg_card.inner, bg=BG_CARD)
+        reg_btn_row.pack(fill="x", pady=(10, 0))
+        AccentButton(reg_btn_row, "CREATE ACCOUNT", command=self._register,
+                     primary=False, width=200, height=38).pack(side="left")
+
+    # ── Helpers ──────────────────────────────────────────────────────────────
+    def _draw_dot(self, connected: bool):
+        self._status_dot.delete("all")
+        color = SUCCESS if connected else ERROR
+        self._status_dot.create_oval(0, 0, 10, 10, fill=color, outline="")
+
+    def _refresh_status(self):
+        if _HAS_BACKEND:
+            sess = _bc.get_session()
+            if sess.connected:
+                self._draw_dot(True)
+                self._status_lbl.config(text=f"Connected to  {sess.base_url}",
+                                         fg=SUCCESS)
+                self._user_lbl.config(
+                    text=f"  Logged in as: {sess.user_email}  |  ID: {sess.user_id}")
+                return
+        self._draw_dot(False)
+        self._status_lbl.config(text="Not connected", fg=TEXT_2)
+        self._user_lbl.config(text="")
+
+    def _test_conn(self):
+        url = self._url_entry.get_value().strip()
+        if not url:
+            toast(self._app.root, "Enter a server URL first.", "warn")
+            return
+        if not _HAS_BACKEND:
+            toast(self._app.root, "backend_client module not found.", "error")
+            return
+
+        def _run():
+            ok = _bc.check_connectivity(url)
+            if ok:
+                self._app.root.after(0, lambda: toast(
+                    self._app.root, f"Server at {url} is reachable!", "success"))
+            else:
+                self._app.root.after(0, lambda: toast(
+                    self._app.root, f"Cannot reach {url}", "error"))
+        threading.Thread(target=_run, daemon=True).start()
+        toast(self._app.root, "Testing connection...", "info")
+
+    def _login(self):
+        url   = self._url_entry.get_value().strip()
+        email = self._email.get_value().strip()
+        pw    = self._pw.get()
+        if not url or not email or not pw:
+            toast(self._app.root, "Fill in server URL, email, and password.", "warn")
+            return
+        if not _HAS_BACKEND:
+            toast(self._app.root, "backend_client module not found.", "error")
+            return
+
+        def _run():
+            try:
+                sess = _bc.login(url, email, pw)
+                self._app.root.after(0, lambda: toast(
+                    self._app.root,
+                    f"Logged in as {sess.user_email}", "success"))
+                self._app.root.after(0, self._refresh_status)
+            except Exception as e:
+                self._app.root.after(0, lambda: toast(
+                    self._app.root, str(e), "error"))
+        threading.Thread(target=_run, daemon=True).start()
+        toast(self._app.root, "Logging in...", "info")
+
+    def _logout(self):
+        if _HAS_BACKEND:
+            _bc.logout()
+        self._refresh_status()
+        toast(self._app.root, "Logged out from server.", "info")
+
+    def _register(self):
+        url   = self._url_entry.get_value().strip()
+        email = self._email.get_value().strip()
+        pw    = self._pw.get()
+        name  = self._reg_name.get_value().strip()
+        if not all([url, email, pw, name]):
+            toast(self._app.root, "Fill in all fields (URL, email, password, name).", "warn")
+            return
+        if not _HAS_BACKEND:
+            toast(self._app.root, "backend_client module not found.", "error")
+            return
+
+        def _run():
+            try:
+                _bc.register(url, email, pw, name)
+                self._app.root.after(0, lambda: toast(
+                    self._app.root,
+                    "Account created! You can now log in.", "success"))
+            except Exception as e:
+                self._app.root.after(0, lambda: toast(
+                    self._app.root, str(e), "error"))
+        threading.Thread(target=_run, daemon=True).start()
+        toast(self._app.root, "Creating account...", "info")
+
+
+# ===========================================================================
 # SIDEBAR
 # ===========================================================================
 class Sidebar(tk.Frame):
     NAV = [
-        ("encrypt", "^", "Encrypt File", "show_encrypt"),
-        ("decrypt", "v", "Decrypt File", "show_decrypt"),
-        ("log",     "=", "Audit Log",    "show_log"),
+        ("encrypt",  "^",  "Encrypt File",  "show_encrypt"),
+        ("decrypt",  "v",  "Decrypt File",  "show_decrypt"),
+        ("log",      "=",  "Audit Log",     "show_log"),
+        ("settings", "*",  "Settings",      "show_settings"),
     ]
 
     def __init__(self, parent, app, **kw):
@@ -1127,6 +1515,7 @@ class Sidebar(tk.Frame):
         self._app    = app
         self._active = "encrypt"
         self._btns   = {}
+        self._conn_lbl = None
         self._build()
 
     def _build(self):
@@ -1162,7 +1551,29 @@ class Sidebar(tk.Frame):
         tk.Label(info, text="In-memory decryption",
                  bg=BG_SURFACE, fg=TEXT_3, font=FONT_SMALL).pack(anchor="w", pady=(0, 6))
 
+        # Server connection badge (bottom of sidebar)
+        self._conn_lbl = tk.Label(self, text="", bg=BG_SURFACE,
+                                   font=FONT_SMALL, pady=4)
+        self._conn_lbl.pack(fill="x", padx=16, pady=(0, 12))
+        self._refresh_conn_badge()
+
         self._set_active("encrypt")
+
+    def _refresh_conn_badge(self):
+        if self._conn_lbl is None:
+            return
+        if _HAS_BACKEND and _bc.get_session().connected:
+            self._conn_lbl.config(
+                text=f"  Server: ON",
+                fg=SUCCESS, bg=SUCCESS_DIM,
+                highlightthickness=1, highlightbackground=SUCCESS
+            )
+        else:
+            self._conn_lbl.config(
+                text="  Server: OFF (local only)",
+                fg=TEXT_3, bg=BG_SURFACE,
+                highlightthickness=0
+            )
 
     def _nav_btn(self, key, icon, label, method_name):
         outer = tk.Frame(self, bg=BG_SURFACE, cursor="hand2")
@@ -1261,13 +1672,18 @@ class DRMGuardApp:
         self._current.pack(fill="both", expand=True)
         self.sidebar.set_active(key)
 
-    def show_encrypt(self): self._switch(EncryptorPage, "encrypt")
-    def show_decrypt(self): self._switch(DecryptorPage, "decrypt")
-    def show_log(self):     self._switch(LogPage,        "log")
+    def show_encrypt(self):  self._switch(EncryptorPage, "encrypt")
+    def show_decrypt(self):  self._switch(DecryptorPage, "decrypt")
+    def show_log(self):      self._switch(LogPage,        "log")
+    def show_settings(self): self._switch(SettingsPage,  "settings")
 
     def refresh_log(self):
         if isinstance(self._current, LogPage):
             self._current.refresh()
+
+    def refresh_sidebar_badge(self):
+        """Update the server connection badge in the sidebar."""
+        self.sidebar._refresh_conn_badge()
 
 
 # ===========================================================================
