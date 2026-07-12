@@ -937,8 +937,8 @@ class EncryptorPage(tk.Frame):
 
         self._lock_var = tk.StringVar(value="MAC Address")
         for val, desc in [
-            ("MAC Address", "Hardware MAC (recommended)"),
-            ("IP Address",  "Current IP address"),
+            ("MAC Address", "Target MAC Address"),
+            ("IP Address",  "Target IP address"),
             ("None",        "No device restriction"),
         ]:
             row = tk.Frame(lock_card.inner, bg=BG_CARD)
@@ -947,18 +947,21 @@ class EncryptorPage(tk.Frame):
                 row, variable=self._lock_var, value=val,
                 bg=BG_CARD, fg=TEXT_1, selectcolor=BG_CARD,
                 activebackground=BG_CARD, activeforeground=ACCENT,
-                font=FONT_BODY, text=val
+                font=FONT_BODY, text=val, command=self._on_lock_change
             ).pack(side="left")
             tk.Label(row, text=f"  {desc}", bg=BG_CARD,
                      fg=TEXT_3, font=FONT_SMALL).pack(side="left")
 
-        info_f = tk.Frame(lock_card.inner, bg=BG_CARD2,
-                          highlightthickness=1, highlightbackground=BDR_SUB)
-        info_f.pack(fill="x", pady=(8, 0))
-        tk.Label(info_f, text=f"  MAC  {get_mac()}",
-                 bg=BG_CARD2, fg=TEXT_ACCENT, font=FONT_MONO).pack(anchor="w", padx=8, pady=(6, 2))
-        tk.Label(info_f, text=f"  IP   {get_ip()}",
-                 bg=BG_CARD2, fg=TEXT_ACCENT, font=FONT_MONO).pack(anchor="w", padx=8, pady=(0, 6))
+        self._lock_input_f = tk.Frame(lock_card.inner, bg=BG_CARD)
+        self._lock_input_f.pack(fill="x", pady=(8, 0))
+        tk.Label(self._lock_input_f, text="Recipient's Identifier", bg=BG_CARD, fg=TEXT_2, font=FONT_LABEL).pack(anchor="w", pady=(0, 4))
+        self._target_id_entry = StyledEntry(self._lock_input_f, placeholder="e.g. 00:1A:2B:3C:4D:5E")
+        self._target_id_entry.pack(fill="x", ipady=8)
+        
+        hrow = tk.Frame(self._lock_input_f, bg=BG_CARD)
+        hrow.pack(fill="x", pady=(6, 0))
+        AccentButton(hrow, "Use My MAC", command=lambda: self._target_id_entry.set_value(get_mac()), primary=False, width=100, height=24).pack(side="left", padx=(0, 6))
+        AccentButton(hrow, "Use My IP", command=lambda: self._target_id_entry.set_value(get_ip()), primary=False, width=100, height=24).pack(side="left")
 
         self._pw_card = GlassCard(opts_row, "Encryption Password", "Key")
         self._pw_card.pack(side="left", fill="both", expand=True)
@@ -1049,6 +1052,14 @@ class EncryptorPage(tk.Frame):
             except tk.TclError:
                 pass
 
+    def _on_lock_change(self):
+        if self._lock_var.get() == "None":
+            self._target_id_entry.config(state="disabled")
+            self._target_id_entry.set_value("No restriction")
+        else:
+            self._target_id_entry.config(state="normal")
+            self._target_id_entry.clear()
+
     def _on_mode_change(self):
         mode = self._mode_var.get()
         if mode == "SERVER":
@@ -1102,8 +1113,13 @@ class EncryptorPage(tk.Frame):
 
         expiry_str = expiry_dt.strftime("%Y-%m-%d %H:%M")
         pref       = self._lock_var.get()
-        identifier = (get_mac() if pref == "MAC Address"
-                      else (get_ip() if pref == "IP Address" else "None"))
+        if pref == "None":
+            identifier = "None"
+        else:
+            identifier = self._target_id_entry.get_value().strip()
+            if not identifier:
+                toast(self._app.root, f"Please enter the recipient's {pref}.", "warn")
+                return
         wm_text    = self._wm_entry.get_value() if self._wm_var.get() else ""
         wm_opacity = self._opacity.get()         if self._wm_var.get() else 0
 
