@@ -619,6 +619,11 @@ class PDFViewer(tk.Toplevel):
         self._canvas.pack(fill="both", expand=True)
         self._canvas.bind("<MouseWheel>",
             lambda e: self._canvas.yview_scroll(int(-1*(e.delta/120)), "units"))
+        
+        # Security bindings against data theft
+        for b in ("<Button-3>", "<Button-2>", "<Control-c>", "<Print>"):
+            self.bind(b, lambda e: "break")
+            self._canvas.bind(b, lambda e: "break")
 
     def _render(self):
         page = self.doc.load_page(self.page_number)
@@ -702,6 +707,11 @@ class ImageViewer(tk.Toplevel):
         vsb.config(command=self._canvas.yview)
         hsb.config(command=self._canvas.xview)
         self._canvas.pack(fill="both", expand=True)
+        
+        # Security bindings against data theft
+        for b in ("<Button-3>", "<Button-2>", "<Control-c>", "<Print>"):
+            self.bind(b, lambda e: "break")
+            self._canvas.bind(b, lambda e: "break")
 
     def _render(self):
         w = int(self._orig.width  * self.zoom)
@@ -1319,6 +1329,10 @@ class DRMGuardApp:
             _apply_anti_screenshot(self.root.winfo_id())
         except Exception:
             pass
+            
+        # Global security bindings against data theft
+        for b in ("<Button-3>", "<Button-2>", "<Control-c>", "<Print>"):
+            self.root.bind_all(b, lambda e: "break")
 
         self._layout = tk.Frame(self.root, bg=BG_BASE)
         self._layout.pack(fill="both", expand=True)
