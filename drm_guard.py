@@ -54,8 +54,85 @@ def _apply_anti_screenshot(hwnd):
             ctypes.windll.user32.SetWindowDisplayAffinity(hwnd, WDA_EXCLUDEFROMCAPTURE)
         except Exception:
             pass
+# ---------------------------------------------------------------------------
+# Global OS-Level Keyboard Hook
+# ---------------------------------------------------------------------------
+_hook_id = None
+_hook_proc_ref = None
 
+def _start_keyboard_hook():
+    global _hook_id, _hook_proc_ref
+    if platform.system() != "Windows":
+        return
 
+    try:
+        import ctypes
+        from ctypes import wintypes
+        import threading
+        
+        user32 = ctypes.windll.user32
+        WH_KEYBOARD_LL = 13
+        VK_SNAPSHOT = 0x2C
+        VK_C = 0x43
+        VK_P = 0x50
+        VK_S = 0x53
+        VK_LWIN = 0x5B
+        VK_RWIN = 0x5C
+        VK_SHIFT = 0x10
+        VK_CONTROL = 0x11
+        
+        WM_KEYDOWN = 0x0100
+        WM_SYSKEYDOWN = 0x0104
+
+        @ctypes.WINFUNCTYPE(ctypes.c_long, ctypes.c_int, wintypes.WPARAM, wintypes.LPARAM)
+        def hook_proc(nCode, wParam, lParam):
+            if nCode >= 0 and (wParam == WM_KEYDOWN or wParam == WM_SYSKEYDOWN):
+                vk_code = ctypes.cast(lParam, ctypes.POINTER(ctypes.c_int))[0]
+                
+                # Print Screen
+                if vk_code == VK_SNAPSHOT:
+                    return 1
+                    
+                # Win + Shift + S (Snipping Tool)
+                if vk_code == VK_S:
+                    lwin = user32.GetAsyncKeyState(VK_LWIN) & 0x8000
+                    rwin = user32.GetAsyncKeyState(VK_RWIN) & 0x8000
+                    shift = user32.GetAsyncKeyState(VK_SHIFT) & 0x8000
+                    if (lwin or rwin) and shift:
+                        return 1
+                        
+                # Ctrl + C or Ctrl + P
+                if vk_code in (VK_C, VK_P):
+                    ctrl = user32.GetAsyncKeyState(VK_CONTROL) & 0x8000
+                    if ctrl:
+                        return 1
+
+            return user32.CallNextHookEx(None, nCode, wParam, lParam)
+
+        _hook_proc_ref = hook_proc
+
+        def _hook_thread():
+            global _hook_id
+            _hook_id = user32.SetWindowsHookExW(WH_KEYBOARD_LL, _hook_proc_ref, None, 0)
+            msg = wintypes.MSG()
+            while user32.GetMessageW(ctypes.byref(msg), None, 0, 0) > 0:
+                user32.TranslateMessage(ctypes.byref(msg))
+                user32.DispatchMessageW(ctypes.byref(msg))
+
+        t = threading.Thread(target=_hook_thread, daemon=True)
+        t.start()
+    except Exception as e:
+        print("Failed to start keyboard hook:", e)
+
+def _stop_keyboard_hook():
+    global _hook_id
+    if _hook_id and platform.system() == "Windows":
+        try:
+            import ctypes
+            ctypes.windll.user32.UnhookWindowsHookEx(_hook_id)
+            _hook_id = None
+        except Exception:
+            pass
 # ===========================================================================
 # DESIGN TOKENS  -- Slate + Cyan palette
 # ===========================================================================
@@ -1330,6 +1407,13 @@ class DRMGuardApp:
         except Exception:
             pass
             
+        _start_keyboard_hook()
+        
+        def _on_close():
+            _stop_keyboard_hook()
+            self.root.destroy()
+        self.root.protocol("WM_DELETE_WINDOW", _on_close)
+        
         # Global security bindings against data theft
         for b in ("<Button-3>", "<Button-2>", "<Control-c>", "<Print>"):
             self.root.bind_all(b, lambda e: "break")
