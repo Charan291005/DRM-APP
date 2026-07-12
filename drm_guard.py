@@ -136,7 +136,7 @@ def _password_hash(password: str) -> str:
 def encrypt_file(path: str, expiry: str, identifier: str,
                  password: str, watermark_text: str = "",
                  watermark_opacity: int = 0,
-                 progress_callback=None) -> str:
+                 progress_callback=None, out_path: str = None) -> str:
     key        = _derive_key(identifier, expiry, password)
     iv         = os.urandom(16)
     cipher     = AES.new(key, AES.MODE_CBC, iv)
@@ -144,7 +144,9 @@ def encrypt_file(path: str, expiry: str, identifier: str,
     pw_hash    = _password_hash(password)
     wm_b64     = base64.b64encode(watermark_text.encode()).decode()
     header     = f"{expiry}|{identifier}|{ext}|{pw_hash}|{wm_b64}|{watermark_opacity}".encode()
-    out_path   = os.path.splitext(path)[0] + ".drm"
+    
+    if not out_path:
+        out_path = os.path.splitext(path)[0] + ".drm"
     
     total_size = os.path.getsize(path)
     processed = 0
@@ -959,12 +961,23 @@ class EncryptorPage(tk.Frame):
         wm_text    = self._wm_entry.get_value() if self._wm_var.get() else ""
         wm_opacity = self._opacity.get()         if self._wm_var.get() else 0
 
+        default_out = os.path.splitext(f)[0] + ".drm"
+        out_path = filedialog.asksaveasfilename(
+            parent=self._app.root,
+            title="Save Encrypted File As",
+            initialfile=os.path.basename(default_out),
+            defaultextension=".drm",
+            filetypes=[("DRM Files", "*.drm"), ("All Files", "*.*")]
+        )
+        if not out_path:
+            return
+
         def _run():
             try:
                 def _update_prog(p):
                     self._progress_var.set(p)
 
-                out = encrypt_file(f, expiry_str, identifier, pw, wm_text, wm_opacity, progress_callback=_update_prog)
+                out = encrypt_file(f, expiry_str, identifier, pw, wm_text, wm_opacity, progress_callback=_update_prog, out_path=out_path)
                 log_action("ENCRYPT", os.path.basename(f), identifier, expiry_str, "OK")
                 self._app.root.after(0, lambda: toast(
                     self._app.root, f"Saved: {os.path.basename(out)}", "success"))
