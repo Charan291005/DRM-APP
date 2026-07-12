@@ -71,6 +71,11 @@ def _start_keyboard_hook():
         import threading
         
         user32 = ctypes.windll.user32
+        user32.CallNextHookEx.argtypes = [ctypes.c_void_p, ctypes.c_int, wintypes.WPARAM, wintypes.LPARAM]
+        user32.SetWindowsHookExW.argtypes = [ctypes.c_int, ctypes.c_void_p, wintypes.HINSTANCE, wintypes.DWORD]
+        user32.SetWindowsHookExW.restype = ctypes.c_void_p
+        user32.UnhookWindowsHookEx.argtypes = [ctypes.c_void_p]
+
         WH_KEYBOARD_LL = 13
         VK_SNAPSHOT = 0x2C
         VK_C = 0x43
@@ -133,6 +138,61 @@ def _stop_keyboard_hook():
             _hook_id = None
         except Exception:
             pass
+
+# ---------------------------------------------------------------------------
+# Aggressive Process Monitor (Anti-Capture)
+# ---------------------------------------------------------------------------
+_monitor_running = False
+
+def _anti_capture_monitor():
+    global _monitor_running
+    if platform.system() != "Windows":
+        return
+    import time
+    import subprocess
+    
+    blacklisted = {
+        "snippingtool.exe", 
+        "screenclippinghost.exe", 
+        "lightshot.exe", 
+        "sharex.exe",
+        "obs64.exe",
+        "obs32.exe",
+        "camtasia.exe",
+        "greenshot.exe"
+    }
+    
+    while _monitor_running:
+        try:
+            output = subprocess.check_output(
+                ["tasklist", "/FO", "CSV", "/NH"], 
+                creationflags=subprocess.CREATE_NO_WINDOW
+            ).decode('utf-8', errors='ignore').lower()
+            
+            for line in output.splitlines():
+                if not line: continue
+                proc = line.split('","')[0].strip('"')
+                if proc in blacklisted:
+                    subprocess.run(
+                        ["taskkill", "/F", "/IM", proc], 
+                        creationflags=subprocess.CREATE_NO_WINDOW, 
+                        stdout=subprocess.DEVNULL, 
+                        stderr=subprocess.DEVNULL
+                    )
+        except Exception:
+            pass
+        time.sleep(2)
+
+def _start_monitor():
+    global _monitor_running
+    if not _monitor_running:
+        _monitor_running = True
+        import threading
+        threading.Thread(target=_anti_capture_monitor, daemon=True).start()
+
+def _stop_monitor():
+    global _monitor_running
+    _monitor_running = False
 # ===========================================================================
 # DESIGN TOKENS  -- Slate + Cyan palette
 # ===========================================================================
@@ -505,8 +565,14 @@ class ScrollableFrame(tk.Frame):
         self.frame.bind("<Configure>",
                         lambda e: cv.configure(scrollregion=cv.bbox("all")))
         cv.bind("<Configure>", lambda e: cv.itemconfig(_w, width=e.width))
-        cv.bind_all("<MouseWheel>",
-                    lambda e: cv.yview_scroll(int(-1*(e.delta/120)), "units"))
+        
+        def _on_mousewheel(e):
+            try:
+                cv.yview_scroll(int(-1*(e.delta/120)), "units")
+            except Exception:
+                pass
+                
+        cv.bind_all("<MouseWheel>", _on_mousewheel)
 
 
 class TimePicker(tk.Frame):
@@ -1408,9 +1474,11 @@ class DRMGuardApp:
             pass
             
         _start_keyboard_hook()
+        _start_monitor()
         
         def _on_close():
             _stop_keyboard_hook()
+            _stop_monitor()
             self.root.destroy()
         self.root.protocol("WM_DELETE_WINDOW", _on_close)
         
