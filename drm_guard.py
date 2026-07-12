@@ -143,19 +143,25 @@ def _password_hash(password: str) -> str:
 def encrypt_file(path: str, expiry: str, identifier: str,
                  password: str, watermark_text: str = "",
                  watermark_opacity: int = 0) -> str:
-    with open(path, "rb") as f:
-        plaintext = f.read()
     key        = _derive_key(identifier, expiry, password)
     iv         = os.urandom(16)
     cipher     = AES.new(key, AES.MODE_CBC, iv)
-    ciphertext = cipher.encrypt(_pad(plaintext))
     ext        = os.path.splitext(path)[1][1:]
     pw_hash    = _password_hash(password)
     wm_b64     = base64.b64encode(watermark_text.encode()).decode()
     header     = f"{expiry}|{identifier}|{ext}|{pw_hash}|{wm_b64}|{watermark_opacity}".encode()
     out_path   = os.path.splitext(path)[0] + ".drm"
-    with open(out_path, "wb") as f:
-        f.write(header + b"\n" + iv + ciphertext)
+    
+    with open(out_path, "wb") as f_out:
+        f_out.write(header + b"\n" + iv)
+        with open(path, "rb") as f_in:
+            while True:
+                chunk = f_in.read(64 * 1024)
+                if len(chunk) < 64 * 1024:
+                    f_out.write(cipher.encrypt(_pad(chunk)))
+                    break
+                else:
+                    f_out.write(cipher.encrypt(chunk))
     return out_path
 
 
@@ -197,7 +203,7 @@ def encrypt_file_server(
     """
     SERVER mode encryption.
     - Generates a random AES-256 key + IV.
-    - Encrypts the file.
+    - Encrypts the file in chunks.
     - Sends key + IV + policy to the backend KMS.
     - Writes a .drm file whose header contains only the file_id (no key!).
 
@@ -210,14 +216,12 @@ def encrypt_file_server(
     if not session.connected:
         raise RuntimeError("Not connected to server. Go to Settings and log in first.")
 
-    with open(path, "rb") as f:
-        plaintext = f.read()
+    file_size_bytes = os.path.getsize(path)
 
     # Generate a truly random key (not derived from password)
     aes_key    = os.urandom(32)
     iv         = os.urandom(16)
     cipher     = AES.new(aes_key, AES.MODE_CBC, iv)
-    ciphertext = cipher.encrypt(_pad(plaintext))
 
     aes_key_b64 = base64.b64encode(aes_key).decode()
     iv_b64      = base64.b64encode(iv).decode()
@@ -234,14 +238,22 @@ def encrypt_file_server(
         lock_identifier  = lock_identifier if lock_type != "NONE" else None,
         watermark_text   = watermark_text,
         watermark_opacity= watermark_opacity,
-        file_size_bytes  = len(plaintext),
+        file_size_bytes  = file_size_bytes,
     )
 
     # Write .drm file — key is NOT in the file
     header   = f"{_SERVER_PREFIX}|{file_id}|{session.url}|{ext}|{iv_b64}".encode()
     out_path = os.path.splitext(path)[0] + ".drm"
-    with open(out_path, "wb") as f:
-        f.write(header + b"\n" + ciphertext)
+    with open(out_path, "wb") as f_out:
+        f_out.write(header + b"\n")
+        with open(path, "rb") as f_in:
+            while True:
+                chunk = f_in.read(64 * 1024)
+                if len(chunk) < 64 * 1024:
+                    f_out.write(cipher.encrypt(_pad(chunk)))
+                    break
+                else:
+                    f_out.write(cipher.encrypt(chunk))
 
     return out_path
 
