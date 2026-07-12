@@ -142,7 +142,8 @@ def _password_hash(password: str) -> str:
 
 def encrypt_file(path: str, expiry: str, identifier: str,
                  password: str, watermark_text: str = "",
-                 watermark_opacity: int = 0) -> str:
+                 watermark_opacity: int = 0,
+                 progress_callback=None) -> str:
     key        = _derive_key(identifier, expiry, password)
     iv         = os.urandom(16)
     cipher     = AES.new(key, AES.MODE_CBC, iv)
@@ -152,6 +153,9 @@ def encrypt_file(path: str, expiry: str, identifier: str,
     header     = f"{expiry}|{identifier}|{ext}|{pw_hash}|{wm_b64}|{watermark_opacity}".encode()
     out_path   = os.path.splitext(path)[0] + ".drm"
     
+    total_size = os.path.getsize(path)
+    processed = 0
+
     with open(out_path, "wb") as f_out:
         f_out.write(header + b"\n" + iv)
         with open(path, "rb") as f_in:
@@ -159,9 +163,14 @@ def encrypt_file(path: str, expiry: str, identifier: str,
                 chunk = f_in.read(64 * 1024)
                 if len(chunk) < 64 * 1024:
                     f_out.write(cipher.encrypt(_pad(chunk)))
+                    processed += len(chunk)
+                    if progress_callback: progress_callback(1.0)
                     break
                 else:
                     f_out.write(cipher.encrypt(chunk))
+                    processed += len(chunk)
+                    if progress_callback and total_size > 0:
+                        progress_callback(processed / total_size)
     return out_path
 
 
@@ -199,6 +208,7 @@ def encrypt_file_server(
     lock_identifier: str,
     watermark_text: str = "",
     watermark_opacity: int = 0,
+    progress_callback=None
 ) -> str:
     """
     SERVER mode encryption.
@@ -244,6 +254,7 @@ def encrypt_file_server(
     # Write .drm file — key is NOT in the file
     header   = f"{_SERVER_PREFIX}|{file_id}|{session.url}|{ext}|{iv_b64}".encode()
     out_path = os.path.splitext(path)[0] + ".drm"
+    processed = 0
     with open(out_path, "wb") as f_out:
         f_out.write(header + b"\n")
         with open(path, "rb") as f_in:
@@ -251,9 +262,14 @@ def encrypt_file_server(
                 chunk = f_in.read(64 * 1024)
                 if len(chunk) < 64 * 1024:
                     f_out.write(cipher.encrypt(_pad(chunk)))
+                    processed += len(chunk)
+                    if progress_callback: progress_callback(1.0)
                     break
                 else:
                     f_out.write(cipher.encrypt(chunk))
+                    processed += len(chunk)
+                    if progress_callback and file_size_bytes > 0:
+                        progress_callback(processed / file_size_bytes)
 
     return out_path
 
@@ -1004,6 +1020,10 @@ class EncryptorPage(tk.Frame):
         AccentButton(arow, "Open Decryptor ->", command=self._app.show_decrypt,
                      primary=False, width=190, height=40).pack(side="left")
 
+        self._progress_var = tk.DoubleVar()
+        self._progress = ttk.Progressbar(arow, variable=self._progress_var, maximum=1.0, length=200)
+        self._progress.pack(side="left", padx=(20, 0), pady=10)
+
         self._on_mode_change()
 
     # ── Helpers ──────────────────────────────────────────────────────────────
@@ -1089,18 +1109,23 @@ class EncryptorPage(tk.Frame):
 
         def _run():
             try:
+                def _update_prog(p):
+                    self._progress_var.set(p)
+
                 if mode == "SERVER":
-                    out = encrypt_file_server(f, expiry_str, pref, identifier, wm_text, wm_opacity)
+                    out = encrypt_file_server(f, expiry_str, pref, identifier, wm_text, wm_opacity, progress_callback=_update_prog)
                 else:
-                    out = encrypt_file(f, expiry_str, identifier, pw, wm_text, wm_opacity)
+                    out = encrypt_file(f, expiry_str, identifier, pw, wm_text, wm_opacity, progress_callback=_update_prog)
                 log_action("ENCRYPT", os.path.basename(f), identifier, expiry_str, "OK")
                 self._app.root.after(0, lambda: toast(
                     self._app.root, f"Saved: {os.path.basename(out)}", "success"))
                 self._app.root.after(0, self._app.refresh_log)
+                self._app.root.after(0, lambda: self._progress_var.set(0))
             except Exception as e:
                 log_action("ENCRYPT", os.path.basename(f), identifier, expiry_str, "FAIL")
                 self._app.root.after(0, lambda: toast(
                     self._app.root, f"Encryption failed: {e}", "error"))
+                self._app.root.after(0, lambda: self._progress_var.set(0))
 
         threading.Thread(target=_run, daemon=True).start()
         toast(self._app.root, "Encrypting...", "info")
