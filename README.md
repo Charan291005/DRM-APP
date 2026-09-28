@@ -1,146 +1,78 @@
-# DRM Guard v4.0 — Secure File Protection Suite
-
-> **Production-grade Digital Rights Management (DRM) Suite.**  
-> Built with Python + Tkinter. Features AES-256-CBC encryption, MAC/IP device locking, in-memory decryption, and strict anti-data-theft protocols. 
-> 
-> The suite is split into two secure applications:
-> 1. **DRM Admin:** For organizations to encrypt files and view access audit logs.
-> 2. **DRM Client:** A strictly locked-down viewer distributed to end-users (decryption only, no possibility of data theft).
+<div align="center">
+  <img src="logo.png" alt="DRM Guard Logo" width="150" />
+  <h1>DRM Guard Suite</h1>
+  <p><strong>Military-Grade, Offline-First Digital Rights Management</strong></p>
+</div>
 
 ---
 
-## Features
+**DRM Guard** is a production-grade software suite designed to protect highly sensitive corporate assets (PDFs, Images, and general files). It ensures that proprietary data can be securely distributed to clients and partners without the risk of unauthorized distribution, data theft, or prolonged access.
 
-| Feature | Details |
-|---|---|
-| **AES-256-CBC Encryption** | Industry-standard symmetric encryption with PKCS7 padding |
-| **MAC Address Device Lock** | Files can be bound to a specific machine's hardware MAC address |
-| **IP Address Lock** | Alternatively lock files to a specific network IP |
-| **Expiry Date & Time** | Files automatically become inaccessible after a set date/time |
-| **In-Memory Decryption** | Decrypted bytes never touch the hard drive — RAM only |
-| **PBKDF2-SHA256 Password** | Passwords are stored as a secure hash, never in plaintext |
-| **Watermark Overlay** | Optional dynamic watermark on decrypted PDFs & images |
-| **Drag & Drop** | Drop files directly onto the app window to encrypt/decrypt |
-| **Audit Log** | Every encrypt/decrypt event is logged with timestamp, MAC & IP |
-| **Anti-Screenshot** | Uses Windows `SetWindowDisplayAffinity` to block screen capture |
-| **PDF Viewer** | Built-in secure PDF viewer using PyMuPDF (in-memory rendering) |
-| **Image Viewer** | Built-in secure image viewer supporting PNG, JPG, BMP, WEBP, TIFF |
-| **Password Strength Meter** | Real-time 4-level password strength indicator |
+## 🛡️ Core Security Features
+
+- **Mobile-Delegated Biometrics (TOTP 2FA):** Forces users to verify identity using their phone's FaceID/Fingerprint via Authenticator apps (100% offline).
+- **Zero-Footprint Decryption:** Files are decrypted directly into RAM. Unencrypted bytes *never* touch the hard drive.
+- **Hardware Binding:** Documents can be cryptographically locked to a recipient's specific physical machine (MAC address) or network (IP address).
+- **Anti-Capture Defenses:** Employs low-level Windows APIs and process monitoring to instantly block screen recording (OBS) and screenshot tools (Snipping Tool).
+- **Time-Bomb Expiry:** Files permanently self-destruct (become inaccessible) after a strict expiration date and time.
+- **AES-256-CBC Encryption:** Industry-standard encryption using PKCS7 padding and PBKDF2-SHA256 password hashing.
 
 ---
 
-## Supported File Types
+## 🏗️ The Dual-Software Architecture
 
-- **Encrypt:** Any file type
-- **Preview after decrypt:** PDF, PNG, JPG, JPEG, GIF, BMP, WEBP, TIFF
+To eliminate the risk of reverse-engineering or data theft, the suite is surgically split into two entirely isolated executables:
+
+### 1. `drm_admin.exe` (Internal Use)
+Controlled by your organization. Used to generate `.drm` files, set strict access policies, generate 2FA biometric keys, and view local audit logs.
+
+### 2. `drm_client.exe` (External Distribution)
+Distributed to your customers. It acts as a strictly locked-down viewer. **All encryption algorithms and audit logic have been physically removed from this software.** Even if reverse-engineered, attackers cannot extract logic to manipulate files.
 
 ---
 
-## Installation
+## 🚀 Quick Start
 
-### 1. Clone the repository
+### 1. Installation
+Clone the repository and install the required dependencies:
 ```bash
 git clone https://github.com/Charan291005/DRM-APP.git
 cd DRM-APP
+pip install pyotp pillow pymupdf pycryptodome tkcalendar tkinterdnd2
 ```
 
-### 2. Create a virtual environment (recommended)
-```bash
-python -m venv .venv
-.venv\Scripts\activate   # Windows
-```
-
-### 3. Install dependencies
-```bash
-pip install pillow pymupdf pycryptodome tkcalendar tkinterdnd2
-```
-
-### 4. Build Standalone Executables (For Distribution)
-To securely distribute the software to customers without exposing the source code, compile the Python scripts into standalone executables using PyInstaller:
+### 2. Compiling Executables (For Production)
+Distribute the software securely as standalone `.exe` files without exposing your Python source code.
 ```bash
 pip install pyinstaller
-pyinstaller --noconsole --onefile drm_admin.py
-pyinstaller --noconsole --onefile drm_client.py
+
+# Build the Admin Application
+pyinstaller --noconsole --onefile --icon=logo.ico --add-data "logo.png;." --add-data "logo.ico;." drm_admin.py
+
+# Build the Client Viewer
+pyinstaller --noconsole --onefile --icon=logo.ico --add-data "logo.png;." --add-data "logo.ico;." drm_client.py
 ```
-The compiled `.exe` files will be available in the `dist/` directory. Send `drm_client.exe` to your customers, and keep `drm_admin.exe` for internal use.
+> The compiled files will be located in the `dist/` folder.
 
 ---
 
-## Usage
+## 📖 Operational Workflow
 
-### For Organizations: DRM Admin (`drm_admin.py`)
+### Securing an Asset
+1. Open `drm_admin.exe`.
+2. Drag and drop the confidential file into the encryptor.
+3. Apply policies: Expiry Date, MAC Address lock, and a strong Password.
+4. **(Optional)** Check **Require Phone Authenticator** to enforce mobile biometric 2FA.
+5. Click **ENCRYPT**. A secure `.drm` file is generated.
 
-**Encrypting a File**
-1. Open the Admin app and go to **Encrypt File**.
-2. Drag & drop a file (or click to browse).
-3. Set an **expiry date and time**.
-4. Choose a **device lock** (MAC Address recommended).
-5. Enter a **strong password** and confirm it.
-6. Optionally enable a **watermark overlay**.
-7. Click **ENCRYPT FILE** — the `.drm` file is saved next to your original.
-
-**Viewing the Audit Log**
-- Click **Audit Log** in the sidebar to see all local encryption/decryption events.
-- Log is saved as `drm_audit.csv` in the application directory.
-
-### For Customers: DRM Client (`drm_client.py`)
-
-**Decrypting & Viewing a File**
-1. Open the Client app.
-2. Drop the provided `.drm` file onto the drop zone.
-3. Enter the password provided by the organization.
-4. Click **DECRYPT & VIEW** — the file opens in the secure in-memory viewer.
-*(Note: The client application aggressively blocks screenshots and data capture attempts.)*
+### Secure Viewing (Client Side)
+1. The client opens `drm_client.exe` and drops the `.drm` file into it.
+2. They enter the provided password.
+3. If 2FA was enabled, the app will halt and demand a live 6-digit Authenticator code (requiring phone biometrics).
+4. The file securely opens in the locked-down viewer. Copying, saving, and screenshots are aggressively blocked.
 
 ---
 
-## Security Architecture
-
-```text
-Encryption (drm_admin):
-  plaintext  →  AES-256-CBC(key=SHA256(MAC||expiry||password))  →  .drm file
-  
-Header (stored in .drm):
-  expiry | identifier | extension | PBKDF2_SHA256(password) | watermark_b64 | opacity
-
-Decryption (drm_client):
-  .drm file  →  verify password hash  →  check expiry  →  check MAC
-             →  AES-256-CBC decrypt  →  bytes in RAM  →  secure viewer
-```
-
-**Key improvements over previous versions:**
-- ✅ **Dual-Software Isolation:** The client software physically does not contain the encryption or audit log logic, making it impossible to misuse.
-- ✅ **Password Hashing:** Password is stored as a PBKDF2 hash — not plaintext.
-- ✅ **RAM-Only Decryption:** Decryption is entirely in-memory (no temp files).  
-- ✅ **Anti-Screenshot:** Aggressive global hooks and process monitoring to block capture tools.
-- ✅ **PKCS7 Padding:** Replaces zero-byte padding for standard compliance.
-
----
-
-## Tech Stack
-
-| Component | Library |
-|---|---|
-| GUI | Tkinter + tkinterdnd2 + tkcalendar |
-| Encryption | PyCryptodome (AES-256-CBC) |
-| PDF Rendering | PyMuPDF (fitz) |
-| Image Processing | Pillow |
-| Password Hashing | hashlib (PBKDF2-HMAC-SHA256) |
-
----
-
-## Roadmap (Startup Phase)
-
-- [ ] **Phase 2:** FastAPI backend — Centralized Key Management System (KMS)
-- [ ] **Phase 3:** Server-side MAC validation + online key fetching
-- [ ] **Phase 4:** Creator Web Dashboard (React) — manage files, revoke access, view analytics
-
----
-
-## License
-
-MIT License — see [LICENSE](LICENSE) file.
-
----
-
-*Built as a college project, evolving into a production-grade startup.*
+<div align="center">
+  <i>Built with Python — Evolving into a production-grade startup.</i>
+</div>
