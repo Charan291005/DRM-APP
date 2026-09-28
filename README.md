@@ -1,7 +1,11 @@
 # DRM Guard v4.0 — Secure File Protection Suite
 
-> **Production-grade Digital Rights Management (DRM) desktop application.**  
-> Built with Python + Tkinter. AES-256-CBC encryption, MAC address device locking, in-memory decryption, and a premium dark UI.
+> **Production-grade Digital Rights Management (DRM) Suite.**  
+> Built with Python + Tkinter. Features AES-256-CBC encryption, MAC/IP device locking, in-memory decryption, and strict anti-data-theft protocols. 
+> 
+> The suite is split into two secure applications:
+> 1. **DRM Admin:** For organizations to encrypt files and view access audit logs.
+> 2. **DRM Client:** A strictly locked-down viewer distributed to end-users (decryption only, no possibility of data theft).
 
 ---
 
@@ -51,55 +55,65 @@ python -m venv .venv
 pip install pillow pymupdf pycryptodome tkcalendar tkinterdnd2
 ```
 
-### 4. Run the application
+### 4. Build Standalone Executables (For Distribution)
+To securely distribute the software to customers without exposing the source code, compile the Python scripts into standalone executables using PyInstaller:
 ```bash
-python drm_guard.py
+pip install pyinstaller
+pyinstaller --noconsole --onefile drm_admin.py
+pyinstaller --noconsole --onefile drm_client.py
 ```
+The compiled `.exe` files will be available in the `dist/` directory. Send `drm_client.exe` to your customers, and keep `drm_admin.exe` for internal use.
 
 ---
 
 ## Usage
 
-### Encrypting a File
-1. Open the app and go to **Encrypt File** in the sidebar
-2. Drag & drop a file (or click to browse)
-3. Set an **expiry date and time**
-4. Choose a **device lock** (MAC Address recommended)
-5. Enter a **strong password** and confirm it
-6. Optionally enable a **watermark overlay**
-7. Click **ENCRYPT FILE** — the `.drm` file is saved next to your original
+### For Organizations: DRM Admin (`drm_admin.py`)
 
-### Decrypting a File
-1. Go to **Decrypt File** in the sidebar
-2. Drop the `.drm` file onto the drop zone
-3. Enter the password
-4. Click **DECRYPT & VIEW** — the file opens in the secure in-memory viewer
+**Encrypting a File**
+1. Open the Admin app and go to **Encrypt File**.
+2. Drag & drop a file (or click to browse).
+3. Set an **expiry date and time**.
+4. Choose a **device lock** (MAC Address recommended).
+5. Enter a **strong password** and confirm it.
+6. Optionally enable a **watermark overlay**.
+7. Click **ENCRYPT FILE** — the `.drm` file is saved next to your original.
 
-### Viewing the Audit Log
-- Click **Audit Log** in the sidebar to see all events  
-- Log is saved as `drm_audit.csv` in the application directory
+**Viewing the Audit Log**
+- Click **Audit Log** in the sidebar to see all local encryption/decryption events.
+- Log is saved as `drm_audit.csv` in the application directory.
+
+### For Customers: DRM Client (`drm_client.py`)
+
+**Decrypting & Viewing a File**
+1. Open the Client app.
+2. Drop the provided `.drm` file onto the drop zone.
+3. Enter the password provided by the organization.
+4. Click **DECRYPT & VIEW** — the file opens in the secure in-memory viewer.
+*(Note: The client application aggressively blocks screenshots and data capture attempts.)*
 
 ---
 
 ## Security Architecture
 
-```
-Encryption:
+```text
+Encryption (drm_admin):
   plaintext  →  AES-256-CBC(key=SHA256(MAC||expiry||password))  →  .drm file
   
 Header (stored in .drm):
   expiry | identifier | extension | PBKDF2_SHA256(password) | watermark_b64 | opacity
 
-Decryption:
+Decryption (drm_client):
   .drm file  →  verify password hash  →  check expiry  →  check MAC
              →  AES-256-CBC decrypt  →  bytes in RAM  →  secure viewer
 ```
 
-**Key improvements over v3.0 (test3.py):**
-- ✅ Password is stored as a PBKDF2 hash — not plaintext
-- ✅ Decryption is entirely in-memory (no temp files)  
-- ✅ Anti-screenshot protection on Windows
-- ✅ PKCS7 padding (replaces zero-byte padding)
+**Key improvements over previous versions:**
+- ✅ **Dual-Software Isolation:** The client software physically does not contain the encryption or audit log logic, making it impossible to misuse.
+- ✅ **Password Hashing:** Password is stored as a PBKDF2 hash — not plaintext.
+- ✅ **RAM-Only Decryption:** Decryption is entirely in-memory (no temp files).  
+- ✅ **Anti-Screenshot:** Aggressive global hooks and process monitoring to block capture tools.
+- ✅ **PKCS7 Padding:** Replaces zero-byte padding for standard compliance.
 
 ---
 

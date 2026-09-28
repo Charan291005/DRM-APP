@@ -27,6 +27,15 @@ import socket
 import base64
 from datetime import datetime
 
+def resource_path(relative_path):
+    import os, sys
+    try:
+        base_path = sys._MEIPASS
+    except Exception:
+        base_path = os.path.abspath(".")
+    return os.path.join(base_path, relative_path)
+
+
 import tkinter as tk
 from tkinter import filedialog, ttk
 from tkcalendar import Calendar
@@ -273,14 +282,18 @@ def _password_hash(password: str) -> str:
 def encrypt_file(path: str, expiry: str, identifier: str,
                  password: str, watermark_text: str = "",
                  watermark_opacity: int = 0,
-                 progress_callback=None, out_path: str = None) -> str:
+                 progress_callback=None, out_path: str = None, totp_secret: str = "") -> str:
     key        = _derive_key(identifier, expiry, password)
     iv         = os.urandom(16)
     cipher     = AES.new(key, AES.MODE_CBC, iv)
     ext        = os.path.splitext(path)[1][1:]
     pw_hash    = _password_hash(password)
     wm_b64     = base64.b64encode(watermark_text.encode()).decode()
-    header     = f"{expiry}|{identifier}|{ext}|{pw_hash}|{wm_b64}|{watermark_opacity}".encode()
+    totp_enc = "NONE"
+    if totp_secret:
+        totp_cipher = AES.new(key, AES.MODE_ECB)
+        totp_enc = base64.b64encode(totp_cipher.encrypt(_pad(totp_secret.encode()))).decode()
+    header     = f"{expiry}|{identifier}|{ext}|{pw_hash}|{wm_b64}|{watermark_opacity}|{totp_enc}".encode()
     
     if not out_path:
         out_path = os.path.splitext(path)[0] + ".drm"
@@ -306,16 +319,20 @@ def encrypt_file(path: str, expiry: str, identifier: str,
     return out_path
 
 
-def decrypt_to_bytes(drm_path: str, provided_password: str):
+def decrypt_to_bytes(drm_path: str, provided_password: str, totp_code: str = None):
     """LOCAL mode: fully in-memory decryption. Returns (bytes, ext, wm_text, wm_opacity)."""
     with open(drm_path, "rb") as f:
         header_bytes = f.readline().strip()
         iv           = f.read(16)
         ciphertext   = f.read()
     parts = header_bytes.decode().split("|")
-    if len(parts) != 6:
+    totp_enc = "NONE"
+    if len(parts) == 6:
+        expiry_str, identifier, original_ext, pw_hash, wm_b64, wm_opacity_str = parts
+    elif len(parts) == 7:
+        expiry_str, identifier, original_ext, pw_hash, wm_b64, wm_opacity_str, totp_enc = parts
+    else:
         raise ValueError("Invalid or corrupted DRM header.")
-    expiry_str, identifier, original_ext, pw_hash, wm_b64, wm_opacity_str = parts
     watermark_text    = base64.b64decode(wm_b64).decode()
     watermark_opacity = int(wm_opacity_str)
     if _password_hash(provided_password) != pw_hash:
@@ -328,6 +345,16 @@ def decrypt_to_bytes(drm_path: str, provided_password: str):
             f"Expected: {identifier}\nYour MAC: {get_mac()}"
         )
     key    = _derive_key(identifier, expiry_str, provided_password)
+    
+    if totp_enc != "NONE":
+        import pyotp
+        totp_cipher = AES.new(key, AES.MODE_ECB)
+        totp_secret = _unpad(totp_cipher.decrypt(base64.b64decode(totp_enc))).decode()
+        if not totp_code:
+            raise PermissionError("2FA_REQUIRED")
+        if not pyotp.TOTP(totp_secret).verify(totp_code):
+            raise PermissionError("Invalid 2FA code.")
+
     cipher = AES.new(key, AES.MODE_CBC, iv)
     plain  = _unpad(cipher.decrypt(ciphertext))
     return plain, original_ext, watermark_text, watermark_opacity
@@ -983,6 +1010,11 @@ class EncryptorPage(tk.Frame):
         self._pw_card = GlassCard(opts_row, "Encryption Password", "Key")
         self._pw_card.pack(side="left", fill="both", expand=True)
 
+        tfa_card = GlassCard(opts_row, "Mobile 2FA", "2FA")
+        tfa_card.pack(side="left", fill="both", expand=True, padx=(10, 0))
+        self._tfa_var = tk.BooleanVar()
+        tk.Checkbutton(tfa_card.inner, text="Require Phone Authenticator", variable=self._tfa_var, bg=BG_CARD, fg=TEXT_1, selectcolor=BG_CARD, activebackground=BG_CARD, activeforeground=ACCENT, font=FONT_BODY).pack(anchor="w", pady=(10, 0))
+
         tk.Label(self._pw_card.inner, text="Password", bg=BG_CARD,
                  fg=TEXT_2, font=FONT_LABEL).pack(anchor="w", pady=(0, 4))
         self._pw = StyledEntry(self._pw_card.inner, show_char="*")
@@ -1130,7 +1162,14 @@ class EncryptorPage(tk.Frame):
                 def _update_prog(p):
                     self._progress_var.set(p)
 
-                out = encrypt_file(f, expiry_str, identifier, pw, wm_text, wm_opacity, progress_callback=_update_prog, out_path=out_path)
+                
+                totp_s = ""
+                if self._tfa_var.get():
+                    import pyotp
+                    totp_s = pyotp.random_base32()
+                    from tkinter import messagebox
+                    self._app.root.after(0, lambda: messagebox.showinfo("2FA Enabled", f"Securely send this setup key to the recipient:\n\n{totp_s}\n\nThey must add it to Google Authenticator/Authy to decrypt this file."))
+                out = encrypt_file(f, expiry_str, identifier, pw, wm_text, wm_opacity, progress_callback=_update_prog, out_path=out_path, totp_secret=totp_s)
                 log_action("ENCRYPT", os.path.basename(f), identifier, expiry_str, "OK")
                 self._app.root.after(0, lambda: toast(
                     self._app.root, f"Saved: {os.path.basename(out)}", "success"))
@@ -1245,9 +1284,9 @@ class DecryptorPage(tk.Frame):
             toast(self._app.root, "Please enter the decryption password.", "warn")
             return
 
-        def _run():
+        def _run(code=None):
             try:
-                data, ext, wm_text, wm_opacity = decrypt_to_bytes(self._file, pw)
+                data, ext, wm_text, wm_opacity = decrypt_to_bytes(self._file, pw, code)
                 log_action("DECRYPT", os.path.basename(self._file), get_mac(), "-", "OK")
 
                 def _open():
@@ -1264,8 +1303,16 @@ class DecryptorPage(tk.Frame):
                     self._app.root, "File opened securely (LOCAL mode).", "success"))
                 self._app.root.after(0, self._app.refresh_log)
             except PermissionError as e:
+                if str(e) == "2FA_REQUIRED":
+                    def _ask():
+                        from tkinter import simpledialog
+                        ans = simpledialog.askstring("2FA Required", "Enter 6-digit Authenticator Code (Unlock phone):", parent=self._app.root)
+                        if ans:
+                            threading.Thread(target=lambda: _run(ans), daemon=True).start()
+                    self._app.root.after(0, _ask)
+                    return
                 log_action("DECRYPT", os.path.basename(self._file), get_mac(), "-", "DENIED")
-                self._app.root.after(0, lambda: toast(self._app.root, str(e), "error"))
+                self._app.root.after(0, lambda e_msg=str(e): toast(self._app.root, e_msg, "error"))
             except Exception as e:
                 self._app.root.after(0, lambda: toast(
                     self._app.root, f"Decryption failed: {e}", "error"))
@@ -1363,11 +1410,15 @@ class Sidebar(tk.Frame):
         # Brand
         brand = tk.Frame(self, bg=BG_SURFACE)
         brand.pack(fill="x", padx=20, pady=(24, 0))
-        icon_cv = tk.Canvas(brand, width=34, height=34,
-                            bg=BG_SURFACE, highlightthickness=0)
-        icon_cv.pack(side="left")
-        icon_cv.create_oval(2, 2, 32, 32, fill=ACCENT_DIM, outline=ACCENT, width=1.5)
-        icon_cv.create_text(17, 17, text="DG", fill=ACCENT, font=("Segoe UI", 11, "bold"))
+        try:
+            img = Image.open(resource_path("logo.png")).resize((34, 34), Image.LANCZOS)
+            self._logo_photo = ImageTk.PhotoImage(img)
+            tk.Label(brand, image=self._logo_photo, bg=BG_SURFACE).pack(side="left")
+        except Exception:
+            icon_cv = tk.Canvas(brand, width=34, height=34, bg=BG_SURFACE, highlightthickness=0)
+            icon_cv.pack(side="left")
+            icon_cv.create_oval(2, 2, 32, 32, fill=ACCENT_DIM, outline=ACCENT, width=1.5)
+            icon_cv.create_text(17, 17, text="DG", fill=ACCENT, font=("Segoe UI", 11, "bold"))
         bt = tk.Frame(brand, bg=BG_SURFACE)
         bt.pack(side="left", padx=10)
         tk.Label(bt, text="DRM Guard", bg=BG_SURFACE,
@@ -1467,6 +1518,10 @@ class DRMGuardApp:
         self.root.geometry("1180x820")
         self.root.minsize(960, 640)
         self.root.configure(bg=BG_BASE)
+        try:
+            self.root.iconbitmap(resource_path("logo.ico"))
+        except:
+            pass
         self.root.update_idletasks()
         try:
             _apply_anti_screenshot(self.root.winfo_id())

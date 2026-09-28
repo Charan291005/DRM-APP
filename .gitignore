@@ -25,3 +25,8 @@ drm_audit.csv
 # PyInstaller
 dist/
 build/
+
+# Scratch & Patch Scripts
+patch_*.py
+test*.py
+log.csv
