@@ -676,7 +676,7 @@ class DropZone(tk.Frame):
         self._on_file   = on_file
         self._filetypes = filetypes or []
         self._label_txt = label
-        self._file      = ""
+        self._files     = []
 
         self._icon_lbl = tk.Label(self, text="^", bg=ACCENT_DIM, fg=ACCENT,
                                    font=("Segoe UI", 20, "bold"))
@@ -712,29 +712,49 @@ class DropZone(tk.Frame):
 
     def _browse(self, _=None):
         if self._filetypes:
-            path = filedialog.askopenfilename(filetypes=self._filetypes)
+            paths = filedialog.askopenfilenames(filetypes=self._filetypes)
         else:
-            path = filedialog.askopenfilename()
-        if path:
-            self._set(path)
+            paths = filedialog.askopenfilenames()
+        if paths:
+            self._set(list(paths))
 
     def _on_drop(self, event):
-        path = event.data.strip().strip("{}")
-        self._set(path)
+        if hasattr(self, 'tk'):
+            paths = self.tk.splitlist(event.data)
+        else:
+            paths = [event.data.strip().strip("{}")]
+        self._set(list(paths))
 
-    def _set(self, path):
-        self._file = path
-        self._lbl.config(text=os.path.basename(path), fg=TEXT_1)
-        size_kb = os.path.getsize(path) / 1024
-        self._sub.config(
-            text=f"{size_kb:.1f} KB  |  {os.path.splitext(path)[1].upper()}")
-        self._on_file(path)
+    def _set(self, paths):
+        all_files = []
+        for p in paths:
+            if os.path.isdir(p):
+                for root, _, files in os.walk(p):
+                    for f in files:
+                        all_files.append(os.path.join(root, f))
+            elif os.path.isfile(p):
+                all_files.append(p)
+        self._files = all_files
+        
+        if len(self._files) == 1:
+            path = self._files[0]
+            self._lbl.config(text=os.path.basename(path), fg=TEXT_1)
+            size_kb = os.path.getsize(path) / 1024
+            self._sub.config(text=f"{size_kb:.1f} KB  |  {os.path.splitext(path)[1].upper()}")
+        elif len(self._files) > 1:
+            self._lbl.config(text=f"{len(self._files)} files selected", fg=TEXT_1)
+            total_size = sum(os.path.getsize(f) for f in self._files) / 1024
+            self._sub.config(text=f"{total_size:.1f} KB total")
+        else:
+            self.reset()
+            return
+        self._on_file(self._files)
 
-    def get_path(self):
-        return self._file
+    def get_paths(self):
+        return self._files
 
     def reset(self):
-        self._file = ""
+        self._files = []
         self._lbl.config(text=self._label_txt, fg=TEXT_2)
         self._sub.config(text="")
 
@@ -917,7 +937,7 @@ class EncryptorPage(tk.Frame):
     def __init__(self, parent, app, **kw):
         super().__init__(parent, bg=BG_BASE, **kw)
         self._app  = app
-        self._file = ""
+        self._files = []
         self._build()
 
     def _build(self):
@@ -943,8 +963,8 @@ class EncryptorPage(tk.Frame):
 
         # ── Drop Zone ────────────────────────────────────────────────────────
         self._dz = DropZone(
-            c, on_file=lambda p: setattr(self, "_file", p),
-            label="Drop any file here  |  click to browse"
+            c, on_file=lambda p: setattr(self, "_files", p),
+            label="Drop files or folders here  |  click to browse"
         )
         self._dz.pack(fill="x", ipady=8, pady=(0, 16))
 
@@ -1109,9 +1129,9 @@ class EncryptorPage(tk.Frame):
             self._target_id_entry.clear()
 
     def _encrypt(self):
-        f = self._file
-        if not f or not os.path.exists(f):
-            toast(self._app.root, "Please select a valid file first.", "warn")
+        files = getattr(self, "_files", [])
+        if not files:
+            toast(self._app.root, "Please select a valid file or folder first.", "warn")
             return
 
         pw = self._pw.get()
@@ -1146,39 +1166,37 @@ class EncryptorPage(tk.Frame):
         wm_text    = self._wm_entry.get_value() if self._wm_var.get() else ""
         wm_opacity = self._opacity.get()         if self._wm_var.get() else 0
 
-        default_out = os.path.splitext(f)[0] + ".drm"
-        out_path = filedialog.asksaveasfilename(
-            parent=self._app.root,
-            title="Save Encrypted File As",
-            initialfile=os.path.basename(default_out),
-            defaultextension=".drm",
-            filetypes=[("DRM Files", "*.drm"), ("All Files", "*.*")]
-        )
-        if not out_path:
-            return
+        if len(files) == 1:
+            default_out = os.path.splitext(files[0])[0] + ".drm"
+            out_path = filedialog.asksaveasfilename(parent=self._app.root, title="Save Encrypted File As", initialfile=os.path.basename(default_out), defaultextension=".drm", filetypes=[("DRM Files", "*.drm"), ("All Files", "*.*")])
+            if not out_path: return
+            out_paths = [out_path]
+        else:
+            out_dir = filedialog.askdirectory(parent=self._app.root, title="Select Output Directory for Batch Encryption")
+            if not out_dir: return
+            out_paths = [os.path.join(out_dir, os.path.basename(os.path.splitext(f)[0]) + ".drm") for f in files]
 
         def _run():
             try:
-                def _update_prog(p):
-                    self._progress_var.set(p)
-
-                
                 totp_s = ""
                 if self._tfa_var.get():
                     import pyotp
                     totp_s = pyotp.random_base32()
                     from tkinter import messagebox
-                    self._app.root.after(0, lambda: messagebox.showinfo("2FA Enabled", f"Securely send this setup key to the recipient:\n\n{totp_s}\n\nThey must add it to Google Authenticator/Authy to decrypt this file."))
-                out = encrypt_file(f, expiry_str, identifier, pw, wm_text, wm_opacity, progress_callback=_update_prog, out_path=out_path, totp_secret=totp_s)
-                log_action("ENCRYPT", os.path.basename(f), identifier, expiry_str, "OK")
-                self._app.root.after(0, lambda: toast(
-                    self._app.root, f"Saved: {os.path.basename(out)}", "success"))
+                    self._app.root.after(0, lambda: messagebox.showinfo("2FA Enabled", f"Securely send this setup key to the recipient:\n\n{totp_s}\n\nThey must add it to Google Authenticator/Authy to decrypt these files."))
+                
+                for i, (f, opath) in enumerate(zip(files, out_paths)):
+                    def _update_prog(p, idx=i):
+                        self._progress_var.set((idx + p) / len(files))
+                    encrypt_file(f, expiry_str, identifier, pw, wm_text, wm_opacity, progress_callback=_update_prog, out_path=opath, totp_secret=totp_s)
+                    log_action("ENCRYPT", os.path.basename(f), identifier, expiry_str, "OK")
+
+                self._app.root.after(0, lambda: toast(self._app.root, f"Successfully encrypted {len(files)} files.", "success"))
                 self._app.root.after(0, self._app.refresh_log)
                 self._app.root.after(0, lambda: self._progress_var.set(0))
             except Exception as e:
-                log_action("ENCRYPT", os.path.basename(f), identifier, expiry_str, "FAIL")
-                self._app.root.after(0, lambda: toast(
-                    self._app.root, f"Encryption failed: {e}", "error"))
+                log_action("ENCRYPT", "BATCH_FAIL", identifier, expiry_str, "FAIL")
+                self._app.root.after(0, lambda e_msg=str(e): toast(self._app.root, f"Encryption failed: {e_msg}", "error"))
                 self._app.root.after(0, lambda: self._progress_var.set(0))
 
         threading.Thread(target=_run, daemon=True).start()
@@ -1192,7 +1210,7 @@ class DecryptorPage(tk.Frame):
     def __init__(self, parent, app, **kw):
         super().__init__(parent, bg=BG_BASE, **kw)
         self._app  = app
-        self._file = ""
+        self._files = []
         self._build()
 
     def _build(self):
