@@ -22,3 +22,6 @@ Whether you operate in a completely offline air-gapped environment or require ce
 - **Anti-Capture Defenses:** Low-level Windows API hooks aggressively monitor and block screen recording (like OBS) and screenshot tools (like Snipping Tool) while the document is open.
 - **Time-Bomb Expiry & Revocation:** Files permanently self-destruct after a strict date and time. In Server Mode, you can remotely revoke access to any file instantly.
 - **Mobile-Delegated Biometrics (TOTP 2FA):** Enforce identity verification using the recipient's phone (FaceID/Fingerprint) via standard Authenticator apps before a file opens.
+- **AES-256-CBC Encryption:** Industry-standard military-grade encryption using PKCS7 padding and PBKDF2-SHA256 password hashing.
+
+---
