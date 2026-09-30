@@ -25,3 +25,5 @@ Whether you operate in a completely offline air-gapped environment or require ce
 - **AES-256-CBC Encryption:** Industry-standard military-grade encryption using PKCS7 padding and PBKDF2-SHA256 password hashing.
 
 ---
+
+## 🏗️ The Dual-Software Architecture
