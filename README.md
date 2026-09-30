@@ -15,3 +15,7 @@ Whether you operate in a completely offline air-gapped environment or require ce
 ---
 
 ## 🛡️ Core Security Features
+
+- **In-Memory Zero-Footprint Decryption:** The decrypted contents of your file *never* touch the user's hard drive. It is decrypted directly into RAM and destroyed when the viewer is closed.
+- **Dual-Mode Operation (Local & Server):** Choose between 100% offline encryption or online Key Management Server (KMS) integration for real-time validation and key retrieval.
+- **Hardware Binding:** Cryptographically lock your documents to a recipient's specific physical machine (MAC address) or network infrastructure (IP address).
