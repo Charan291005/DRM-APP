@@ -3,3 +3,7 @@
   <h1>DRM Guard Suite (v5.0)</h1>
   <p><strong>Military-Grade Digital Rights Management for Highly Sensitive Assets</strong></p>
 </div>
+
+---
+
+## 📖 Project Overview
