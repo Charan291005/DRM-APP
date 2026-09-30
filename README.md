@@ -13,3 +13,5 @@
 Whether you operate in a completely offline air-gapped environment or require centralized, real-time revocation and auditing via a centralized Key Management Server (KMS), DRM Guard has you covered.
 
 ---
+
+## 🛡️ Core Security Features
