@@ -67,3 +67,6 @@ pip install pyotp pillow pymupdf pycryptodome tkcalendar tkinterdnd2 requests
 Distribute the software securely as standalone `.exe` binaries without exposing your Python source code.
 ```bash
 pip install pyinstaller
+
+# Build the Admin Application
+pyinstaller --noconsole --onefile --icon=logo.ico --add-data "logo.png;." --add-data "logo.ico;." drm_admin.py
