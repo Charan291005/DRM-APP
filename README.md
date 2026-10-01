@@ -64,3 +64,6 @@ pip install pyotp pillow pymupdf pycryptodome tkcalendar tkinterdnd2 requests
 ```
 
 ### 2. Compiling Executables (For Production)
+Distribute the software securely as standalone `.exe` binaries without exposing your Python source code.
+```bash
+pip install pyinstaller
