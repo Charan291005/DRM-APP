@@ -27,3 +27,7 @@ Whether you operate in a completely offline air-gapped environment or require ce
 ---
 
 ## 🏗️ The Dual-Software Architecture
+
+To guarantee the highest level of security and eliminate the risk of reverse engineering, the DRM Suite is surgically split into two entirely isolated applications:
+
+### 1. `drm_admin.exe` (For Internal Use)
