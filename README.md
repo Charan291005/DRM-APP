@@ -46,3 +46,6 @@ Distributed to your end-users and customers. It acts *only* as a strictly locked
 ### 1. LOCAL Mode (100% Offline)
 * **How it works:** The AES key is cryptographically bound to the provided password and embedded securely within the `.drm` file envelope. 
 * **Best for:** Air-gapped environments, offline distribution (USB drives), or when network connectivity is unreliable.
+
+### 2. SERVER Mode (Online KMS)
+* **How it works:** The AES decryption key is *never* stored in the `.drm` file. Instead, it is stored securely on your backend Key Management Server. When a client attempts to open the file, the client securely queries the server. The server validates the client's MAC address, checks the file's expiration, ensures the file hasn't been remotely revoked, and *only then* securely issues the decryption key into the client's RAM.
