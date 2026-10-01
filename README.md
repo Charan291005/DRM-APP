@@ -73,3 +73,5 @@ pyinstaller --noconsole --onefile --icon=logo.ico --add-data "logo.png;." --add-
 
 # Build the Client Viewer
 pyinstaller --noconsole --onefile --icon=logo.ico --add-data "logo.png;." --add-data "logo.ico;." drm_client.py
+```
+> The compiled, ready-to-distribute executables will be located in the `dist/` directory.
