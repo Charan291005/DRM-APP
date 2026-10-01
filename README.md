@@ -79,3 +79,6 @@ pyinstaller --noconsole --onefile --icon=logo.ico --add-data "logo.png;." --add-
 ---
 
 ## 📖 Operational Workflow: How to use it
+
+### Phase 1: Securing an Asset (Admin)
+1. Open **`drm_admin.exe`**.
