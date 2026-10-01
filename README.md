@@ -52,3 +52,5 @@ Distributed to your end-users and customers. It acts *only* as a strictly locked
 * **Best for:** High-stakes documents requiring real-time tracking, remote kill-switches, and centralized auditing.
 
 ---
+
+## 🚀 Quick Start & Installation
