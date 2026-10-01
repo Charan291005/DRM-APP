@@ -31,3 +31,5 @@ Whether you operate in a completely offline air-gapped environment or require ce
 To guarantee the highest level of security and eliminate the risk of reverse engineering, the DRM Suite is surgically split into two entirely isolated applications:
 
 ### 1. `drm_admin.exe` (For Internal Use)
+Controlled by your organization's administrators. It features a modern 4-section dashboard (Encrypt, Decrypt, Audit Log, Settings). 
+* **Capabilities:** Generate `.drm` files, enforce strict access policies (hardware locking, expiry, 2FA), manage Key Management Server (KMS) connections, generate biometric keys, and review local/server audit logs.
