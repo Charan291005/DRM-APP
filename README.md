@@ -61,3 +61,6 @@ Clone the repository and install the necessary Python dependencies:
 git clone https://github.com/Charan291005/DRM-APP.git
 cd DRM-APP/test
 pip install pyotp pillow pymupdf pycryptodome tkcalendar tkinterdnd2 requests
+```
+
+### 2. Compiling Executables (For Production)
