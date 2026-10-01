@@ -49,3 +49,6 @@ Distributed to your end-users and customers. It acts *only* as a strictly locked
 
 ### 2. SERVER Mode (Online KMS)
 * **How it works:** The AES decryption key is *never* stored in the `.drm` file. Instead, it is stored securely on your backend Key Management Server. When a client attempts to open the file, the client securely queries the server. The server validates the client's MAC address, checks the file's expiration, ensures the file hasn't been remotely revoked, and *only then* securely issues the decryption key into the client's RAM.
+* **Best for:** High-stakes documents requiring real-time tracking, remote kill-switches, and centralized auditing.
+
+---
