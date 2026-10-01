@@ -58,3 +58,6 @@ Distributed to your end-users and customers. It acts *only* as a strictly locked
 ### 1. Setup the Environment
 Clone the repository and install the necessary Python dependencies:
 ```bash
+git clone https://github.com/Charan291005/DRM-APP.git
+cd DRM-APP/test
+pip install pyotp pillow pymupdf pycryptodome tkcalendar tkinterdnd2 requests
