@@ -75,3 +75,7 @@ pyinstaller --noconsole --onefile --icon=logo.ico --add-data "logo.png;." --add-
 pyinstaller --noconsole --onefile --icon=logo.ico --add-data "logo.png;." --add-data "logo.ico;." drm_client.py
 ```
 > The compiled, ready-to-distribute executables will be located in the `dist/` directory.
+
+---
+
+## 📖 Operational Workflow: How to use it
