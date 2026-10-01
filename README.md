@@ -70,3 +70,6 @@ pip install pyinstaller
 
 # Build the Admin Application
 pyinstaller --noconsole --onefile --icon=logo.ico --add-data "logo.png;." --add-data "logo.ico;." drm_admin.py
+
+# Build the Client Viewer
+pyinstaller --noconsole --onefile --icon=logo.ico --add-data "logo.png;." --add-data "logo.ico;." drm_client.py
