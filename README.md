@@ -37,3 +37,6 @@ Controlled by your organization's administrators. It features a modern 4-section
 ### 2. `drm_client.exe` (For External Distribution)
 Distributed to your end-users and customers. It acts *only* as a strictly locked-down secure viewer.
 * **Capabilities:** Requests keys, verifies 2FA, and securely displays the asset. 
+* **Security Note:** All encryption algorithms, admin logic, and audit management are *physically removed* from this executable. Even if a malicious user reverse-engineers the client, there is no logic to manipulate files or forge encryption.
+
+---
