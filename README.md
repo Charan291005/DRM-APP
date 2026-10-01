@@ -82,3 +82,6 @@ pyinstaller --noconsole --onefile --icon=logo.ico --add-data "logo.png;." --add-
 
 ### Phase 1: Securing an Asset (Admin)
 1. Open **`drm_admin.exe`**.
+2. Select your desired mode (**LOCAL** or **SERVER**) in the bottom left or Settings tab.
+3. Drag and drop the highly confidential file (PDF, PNG, JPG) into the encryptor panel.
+4. **Apply Policies:** Set Expiry Date/Time, bind it to a target MAC Address, and set a robust Password.
