@@ -42,3 +42,7 @@ Distributed to your end-users and customers. It acts *only* as a strictly locked
 ---
 
 ## 🔒 Security Modes Explained
+
+### 1. LOCAL Mode (100% Offline)
+* **How it works:** The AES key is cryptographically bound to the provided password and embedded securely within the `.drm` file envelope. 
+* **Best for:** Air-gapped environments, offline distribution (USB drives), or when network connectivity is unreliable.
