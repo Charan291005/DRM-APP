@@ -33,3 +33,7 @@ To guarantee the highest level of security and eliminate the risk of reverse eng
 ### 1. `drm_admin.exe` (For Internal Use)
 Controlled by your organization's administrators. It features a modern 4-section dashboard (Encrypt, Decrypt, Audit Log, Settings). 
 * **Capabilities:** Generate `.drm` files, enforce strict access policies (hardware locking, expiry, 2FA), manage Key Management Server (KMS) connections, generate biometric keys, and review local/server audit logs.
+
+### 2. `drm_client.exe` (For External Distribution)
+Distributed to your end-users and customers. It acts *only* as a strictly locked-down secure viewer.
+* **Capabilities:** Requests keys, verifies 2FA, and securely displays the asset. 
