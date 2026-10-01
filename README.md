@@ -54,3 +54,7 @@ Distributed to your end-users and customers. It acts *only* as a strictly locked
 ---
 
 ## 🚀 Quick Start & Installation
+
+### 1. Setup the Environment
+Clone the repository and install the necessary Python dependencies:
+```bash
