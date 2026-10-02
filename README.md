@@ -85,3 +85,18 @@ pyinstaller --noconsole --onefile --icon=logo.ico --add-data "logo.png;." --add-
 2. Select your desired mode (**LOCAL** or **SERVER**) in the bottom left or Settings tab.
 3. Drag and drop the highly confidential file (PDF, PNG, JPG) into the encryptor panel.
 4. **Apply Policies:** Set Expiry Date/Time, bind it to a target MAC Address, and set a robust Password.
+5. **(Optional)** Enforce **Require Phone Authenticator** to demand mobile biometric 2FA upon opening.
+6. Click **ENCRYPT**. A secure, encrypted `.drm` package is instantly generated.
+
+### Phase 2: Secure Viewing (Client)
+1. The end-user opens **`drm_client.exe`** and drops the `.drm` file into the interface.
+2. They enter the provided password (and authenticate with their Phone's Authenticator app if 2FA was enforced).
+3. If using SERVER mode, the client transparently authenticates with the backend KMS to retrieve the key.
+4. The file securely opens in the locked-down viewer. 
+5. **Protection Active:** While the viewer is open, all copying, saving, screen recording, and screenshotting attempts are instantly intercepted and blocked.
+
+---
+
+<div align="center">
+  <i>Built with Python — Engineered for Zero-Trust Environments.</i>
+</div>
